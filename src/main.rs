@@ -1,60 +1,84 @@
-#![allow(dead_code)]
-use std::{fs::File, io::Write};
+use std::{env, path::Path};
 
 use git2::{
-    Commit, Direction, IndexAddOption, ObjectType, Repository, Signature,
+    Cred, Direction, IndexAddOption, RemoteCallbacks, Repository, Signature,
 };
-use tempdir::TempDir;
 
-fn find_last_commit(repo: &Repository) -> Result<Commit, git2::Error> {
-    let obj = repo.head()?.resolve()?.peel(ObjectType::Commit)?;
-    obj.into_commit()
-        .map_err(|_| git2::Error::from_str("Couldn't find commit"))
+fn print_push_ref_updates(
+    refname: &str,
+    failmsg: Option<&str>,
+) -> Result<(), git2::Error> {
+    match failmsg {
+        None => println!("[updated]:  {}", refname),
+        Some(msg) => println!("[error]:    {} ({})", refname, msg),
+    };
+    Ok(())
 }
 
 fn push(repo: &Repository, url: &str) -> Result<(), git2::Error> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|_url, username_from_url, _allowed_types| {
+        Cred::ssh_key(
+            username_from_url.unwrap(),
+            None,
+            std::path::Path::new(&format!(
+                // "{}/.ssh/id_rsa",
+                "{}/.ssh/id_ed25519",
+                env::var("HOME").unwrap()
+            )),
+            Some("4n4kr4t3r4BSD@@"),
+        )
+    });
+    callbacks.push_update_reference(print_push_ref_updates);
+
     let mut remote = match repo.find_remote("origin") {
         Ok(r) => r,
         Err(_) => repo.remote("origin", url)?,
     };
-    remote.connect(Direction::Push)?;
-    remote.push(&["refs/heads/main:refs/heads/main"], None)
+    let mut remote_conn =
+        remote.connect_auth(Direction::Push, Some(callbacks), None)?;
+    let remote = remote_conn.remote();
+    remote.push(&["refs/heads/master:refs/heads/master"], None)
 }
 
-fn main() {
-    // cria um diretório temporário
-    let tmp_dir = TempDir::new("kps").unwrap();
-    println!("Temp dir: {:?}", tmp_dir.path());
-    // isso converte o tmp_dir para path não removendo a pasta
-    // quando é dropado o arquivo ou o programa terminar
-    let tmp_path = tmp_dir.into_path();
-
-    // criamos um README.md e adicionamos conteúdo
-    let path = tmp_path.join("README.md");
-    let mut file = File::create(path).unwrap();
-    let content = "# My Readme\n\n##Simple test";
-    file.write_all(content.as_bytes()).unwrap();
-
-    let repo = match Repository::init(tmp_path) {
-        Ok(repo) => repo,
-        Err(e) => panic!("failed to init: {}", e),
-    };
-
+fn first_commit(repo: &Repository) -> Result<(), git2::Error> {
+    // Commit
     let mut index = repo.index().expect("cannot get the Index file");
     index
         .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
         .unwrap();
-    // index.write().unwrap();
     let oid = index.write_tree().unwrap();
-    let signature = Signature::now("kps", "mr@kps.com.br").unwrap();
-    // let parent_commit = find_last_commit(&repo).unwrap();
+    let signature = Signature::now("kps", "kps@m0x.ru").unwrap();
     let tree = repo.find_tree(oid).unwrap();
     let message = "kps init";
-    repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
-        .unwrap(); // parents
+    repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])?;
 
-    // removemos o diretório com todos os arquivos
-    // fs::remove_dir_all(tmp_path).expect("remove temp dir");
-    // drop(file);
-    // tmp_dir.close().unwrap();
+    Ok(())
+}
+
+fn init_repo<P: AsRef<Path>>(path: P) -> Repository {
+    // Init
+    let repo = match Repository::init(&path) {
+        Ok(repo) => repo,
+        Err(_) => {
+            let repo = match Repository::open(path) {
+                Ok(repo) => repo,
+                Err(e) => panic!("failed to open: {}", e),
+            };
+            repo
+        }
+    };
+    repo
+}
+
+fn main() {
+    let repo_root = std::env::args().nth(1).expect("expect repo dir");
+    let url = std::env::args().nth(2).expect("expect repo url");
+
+    // init repo
+    let repo = init_repo(repo_root);
+    // commit
+    first_commit(&repo).unwrap();
+    // push
+    push(&repo, &url).unwrap();
 }
