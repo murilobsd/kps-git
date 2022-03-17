@@ -22,11 +22,10 @@ fn push(repo: &Repository, url: &str) -> Result<(), git2::Error> {
             username_from_url.unwrap(),
             None,
             std::path::Path::new(&format!(
-                // "{}/.ssh/id_rsa",
-                "{}/.ssh/id_ed25519",
+                 "{}/.ssh/id_rsa",
                 env::var("HOME").unwrap()
             )),
-            Some("4n4kr4t3r4BSD@@"),
+            None,
         )
     });
     callbacks.push_update_reference(print_push_ref_updates);
